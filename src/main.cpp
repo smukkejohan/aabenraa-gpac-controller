@@ -1,7 +1,7 @@
 
 #include <Arduino.h>
 #include <TimeLib.h>
-
+#include "pins.h"
 // DMX
 #include <TeensyDMX.h>
 
@@ -9,16 +9,29 @@
 #include "Wire.h"
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include "organ.h"
 
-//#include <DmxSimple.h>
-//#include <FastLED.h>
+// Inputs
+#include <Bounce2.h>
+
+// Pin for enabling or disabling the transmitter.
+
+#define NUM_BUTTONS 3
+const int BUTTON_PINS[NUM_BUTTONS] = {SW1_PIN, SW2_PIN, SW3_PIN};
+Bounce * buttons = new Bounce[NUM_BUTTONS];
+
+Bounce * PIR = new Bounce;
+
+Organ organ;
+
+bool inputStateEnabled = false;
+unsigned long lastInputTime = 0;
+unsigned int inputStateTimeout = 5000; // Todo: increase for prodction 
+
 bool builtinBlinkState = false;
 
 // DMX OUTPUT
 namespace teensydmx = ::qindesign::teensydmx;
-// Pin for enabling or disabling the transmitter.
-// This may not be needed for your hardware.
-constexpr uint8_t kTXPin = 23;
 // Create the DMX transmitter on Serial3.
 teensydmx::Sender dmxTx{Serial5}; // Tx on Serial5 is pin 20
 // The current channel outputting a value.
@@ -26,30 +39,19 @@ int channel;
 // END DMX OUTPUT
 
 // OLED display
-#define OLED_RESET 4
-Adafruit_SSD1306 display(OLED_RESET);
+Adafruit_SSD1306 display(OLED_RESET_PIN);
 unsigned long lastDisplayUpdate = 0;
 unsigned int displayUpdateInterval = 1000;
-
-
 // END OLED DISPLAY
 // TIME
-
 
 
 // COLOR
 // Max value for 16 bit channels
 uint16_t maxBrightness = 65535; // 255*255 65536 values
-
 int rgbw[4] = {0,10000,20000,30000};
 int ch[4] = {1,3,5,7};
 // END COLOR
-
-
-// Valves TODO
-//int valve_pins[4] = {1,2,3,4,5,6};
-//#define NUM_VALVES 6
-//#define FAN_PIN 7
 
 
 
@@ -65,42 +67,35 @@ void displayDigits(int digits){
   display.print(digits);
 }
 
+#define NUM_MENU_ITEMS 7
+int activeMenuIndex = 0;
+// d = date, m = month, y = year, h = hour, m = minute, s = second, t = test
+const char menu[NUM_MENU_ITEMS] = {'h', 'm', 's', 'd', 'm', 'y', 't'};
 
 void setup() {
-  setSyncProvider(getTeensy4Time);
+  setSyncProvider(getTeensy4Time); // TODO: new battery 2032 cell when installing on site
 
   // put your setup code here, to run once:
   //DmxSimple.usePin(3);
   //DmxSimple.maxChannel(32);
 
+  pinMode(IN1_PIN, INPUT_PULLUP);
+  //PIR->attach(IN1_PIN, INPUT_PULLUP);       //setup the bounce instance for the current button
+  //PIR->interval(40);              // interval in ms
 
-  pinMode(4, OUTPUT);
+  pinMode(IN2_PIN, INPUT_PULLUP);
+  // TODO debounce for activity input (input 1)
+
+  for (int i = 0; i < NUM_BUTTONS; i++) {
+    buttons[i].attach( BUTTON_PINS[i], INPUT_PULLUP);       //setup the bounce instance for the current button
+    buttons[i].interval(25);              // interval in ms
+  }
 
   // Set the pin that enables the transmitter; may not be needed
-  pinMode(kTXPin, OUTPUT);
-  digitalWriteFast(kTXPin, HIGH);
-
-    // Set up the test packet, including the start code
-  /*for (int i = 0; i < teensydmx::kMaxDMXPacketSize; i++) {
-    dmxTx.set(i, 0x55);
-  }*/
-
-    // Set appropriate BREAK and MAB times:
-  // Bit time=9us, format=8E1: BREAK=90us, MAB=9us
-  // Note that the MAB time might be larger than expected;
-  // if too large, try the timer method below
-  //dmxTx.setBreakSerialParams(1000000/9, SERIAL_8E1);
-
-  // Optionally, we can try setting the times directly,
-  // but they'll likely be larger by a few microseconds
-  // dmxTx.setBreakTime(88);  // Should be in the range 88-120us
-  // dmxTx.setMABTime(8);     // Should be in the range 8-16us
-  // dmxTx.setBreakUseTimerNotSerial(true);
+  pinMode(DMX_kTX_PIN, OUTPUT);
+  digitalWriteFast(DMX_kTX_PIN, HIGH);
 
   dmxTx.begin();
-
-
-
     pinMode(LED_BUILTIN, OUTPUT);
     // initialize communication
     Wire.begin();
@@ -115,6 +110,8 @@ void setup() {
     display.print("working...");
     display.display();
 
+  
+  organ.setup();
 
 }
 
@@ -126,6 +123,8 @@ void loop() {
   digitalWrite(4, LOW);
   delay(5000);
 */
+  organ.update();
+
 
 for(int i=0; i<4; i++) {
   rgbw[i]++;
@@ -136,9 +135,7 @@ for(int i=0; i<4; i++) {
   uint16_t value = (maxBrightness*0.5) + (maxBrightness*0.5) * sin( t * 2.0 * PI );
 
   rgbw[i] = value;
-
 }
-
 
 // TODO: input circuit
 // read button press, knob position
@@ -146,10 +143,7 @@ for(int i=0; i<4; i++) {
 // TODO: acitivity detection
 // read PIR input
 
-
-
 // TODO: valve control, timing is critical make sure it always has priority
-
 
 // TODO: make a timer to set DMX update frequency
 dmxTx.set16Bit(ch[0], rgbw[0]);
@@ -162,21 +156,118 @@ dmxTx.set16Bit(ch[3], rgbw[3]);
 //dmxTx.set16Bit(4, brightness);
 
 
-  // TODO: make a timer to set display update frequency
-  // disable display until input knob pressed
+  // disable display until input buttons pressed
+  if(!inputStateEnabled){
 
-if(millis() - lastDisplayUpdate > displayUpdateInterval) {
-  lastDisplayUpdate = millis();
+    display.clearDisplay();
+    display.display(); // clear the display only if something on it
+    
 
-  char divider = (second() % 2 == 0) ? ':' : ' ';
-  display.clearDisplay();
-  display.setCursor(0,0);
-  displayDigits(hour());
-  display.print(divider);
-  displayDigits(minute());
-  display.print(divider);
-  displayDigits(second());
-  display.display(); 
+  } else {
+
+    if(millis() - lastDisplayUpdate > displayUpdateInterval) {
+      lastDisplayUpdate = millis();
+      char divider = (second() % 2 == 0) ? ':' : ' ';
+      display.clearDisplay();
+      display.setCursor(0,0);
+      displayDigits(hour());
+      display.print(divider);
+      displayDigits(minute());
+      display.print(divider);
+      displayDigits(second());
+
+      display.display(); 
+    }
+  }
+
+  for (int i = 0; i < NUM_BUTTONS; i++)  {
+    buttons[i].update();
+  }
+
+  if(inputStateEnabled){
+    if(millis() - lastInputTime > inputStateTimeout){
+      inputStateEnabled = false;
+      return;
+    } else {
+
+      // Handle button inputs, update lastInputTime if any buttons pressed
+      // Menu navigation using 3 buttons to set the current time
+      
+      // button 1 is menu navigation - hour, minute, second, date (we need date for timezone handling) 
+      // button 2 is UP
+      // button 3 is DOWN
+
+      if(buttons[0].fell()){
+        lastInputTime = millis();
+
+        // shift through active menu item
+        activeMenuIndex = (activeMenuIndex + 1) % NUM_MENU_ITEMS;
+
+      }
+
+      if(buttons[1].fell()){
+        lastInputTime = millis();
+
+        // UP
+        if(menu[activeMenuIndex] == 'h'){
+          // hour
+        } else if(menu[activeMenuIndex] == 'm'){
+          // minute
+        } else if(menu[activeMenuIndex] == 's'){
+          // second
+        } else if(menu[activeMenuIndex] == 'd'){
+          // date
+        } else if(menu[activeMenuIndex] == 'm'){
+          // month
+        } else if(menu[activeMenuIndex] == 'y'){
+          // year
+        } else if(menu[activeMenuIndex] == 't'){
+          // test
+        }
+
+      }
+
+      if(buttons[2].fell()){
+        lastInputTime = millis();
+
+      }
+
+    }
+  } else {
+
+    for (int i = 0; i < NUM_BUTTONS; i++)  {
+      if ( buttons[i].fell() ) {
+        inputStateEnabled = true;
+        lastInputTime = millis();
+
+        organ.play(); // TODO: move to proper location in logic
+        Serial.println("play organ");
+      }
+    }
+
+  }
+  
+  // test buttons
+  /*digitalWriteFast(valve_pins[0], buttons[0].read());
+  digitalWriteFast(valve_pins[1], buttons[1].read());
+  digitalWriteFast(valve_pins[2], buttons[2].read());
+*/
+
+  PIR->update();
+  if (PIR->fell()) {
+      //digitalWriteFast(valve_pins[3], PIR->read());
+  }
+
+  //Serial.println(PIR->read());
+
+  //digitalWriteFast(valve_pins[3], digitalReadFast(IN1_PIN));
+
+
+
+
 }
+
+
+void playSong() {
 
 }
