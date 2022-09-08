@@ -103,12 +103,12 @@ void Organ::fanOff()
 void Organ::setup()
 {
     pinMode(SSR_AC_PIN, OUTPUT);
-    digitalWriteFast(SSR_AC_PIN, HIGH);
+    digitalWriteFast(SSR_AC_PIN, LOW);
 
     for (int i = 0; i < NUM_PIPES; ++i)
     {
         pinMode(valvePins[i], OUTPUT);
-        digitalWriteFast(valvePins[i], 0);
+        digitalWriteFast(valvePins[i], LOW);
     }
 }
 

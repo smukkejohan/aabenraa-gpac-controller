@@ -61,9 +61,11 @@ class Organ {
 
         bool getFanState();
 
+        void setValve(uint8_t i, int value);
+
+
     protected:
 
-        void setValve(uint8_t i, int value);
         uint32_t _startTime;
         bool _isPlaying = false;
         bool _pipeStates[NUM_PIPES];

@@ -32,7 +32,7 @@ uint32_t lastInputTime = 0;
 uint16_t inputStateTimeout = 20000;
 
 // OLED display
-Adafruit_SSD1306 display(OLED_RESET_PIN);
+Adafruit_SSD1306 display(OLED_RESET_PIN); 
 uint32_t lastDisplayUpdate = 0;
 uint16_t displayUpdateInterval = 300;
 // END OLED DISPLAY
@@ -40,13 +40,11 @@ uint16_t displayUpdateInterval = 300;
 
 uint32_t lastPIRActivityTime = 0;
 
-uint8_t nightStartHour = 20;
-uint8_t nightEndHour = 8;
 
 bool displayClear = false;
 
-uint16_t activationDelay = 5000; // TODO: increase for prodction 1 hour
-uint16_t fanPressureDelay = 30000;
+uint32_t activationDelay = 1000*30*60; // 30 minutes
+uint16_t fanPressureDelay =10000;
 
 // 0: idle, 1: armed, 2: active
 int state = 0;
@@ -55,6 +53,16 @@ uint32_t stateChangeTime = 0;
 time_t getTeensy4Time()
 {
   return rtc_get();
+}
+
+uint8_t nightStartHour = 20;
+uint8_t nightEndHour = 8;
+bool isNight() {
+  return hour() >= nightStartHour || hour() < nightEndHour;
+}
+
+int getLEDSegment(int pipeIndex) {
+    return 5-pipeIndex;
 }
 
 void displayDigits(int digits, bool activeInput=false)
@@ -174,12 +182,10 @@ void inputState() {
 
         if(upOrDownPressed) {
           setTime(makeTime(tm));
+          rtc_set(now());
         }
-
     }
-
 }
-
 
 
 void setup()
@@ -188,12 +194,12 @@ void setup()
   
   //led.setup();
 
-  pinMode(IN1_PIN, INPUT_PULLUP);
-  // PIR->attach(IN1_PIN, INPUT_PULLUP);       //setup the bounce instance for the current button
-  // PIR->interval(40);              // interval in ms
+  //pinMode(IN1_PIN, INPUT_PULLUP);
+  PIR->attach(IN1_PIN, INPUT_PULLUP);       //setup the bounce instance for the current button
+  PIR->interval(40);              // interval in ms
 
-  pinMode(IN2_PIN, INPUT_PULLUP);
-  // TODO debounce for activity input (input 1)
+  // IN2 is unused
+  //pinMode(IN2_PIN, INPUT_PULLUP);
 
   for (int i = 0; i < NUM_BUTTONS; i++)
   {
@@ -220,18 +226,117 @@ void setup()
 
   organ.setup();
   organ.loadGivePeaceAChanceChorus();
-
+  //organ.loadGivePeaceAChanceChorusSecondVoice();
+  //organ.loadGivePeaceAChanceChorusSecondVoiceChurch();
   led.setup();
 
 }
 
+void enterState(int newState, bool force=false) {
+  state = newState;
+  stateChangeTime = millis();
+
+  if(state == 0) {
+    // idle
+    Serial.println("Enter state 0 (idle): Wait.");
+    organ.fanOff(); 
+
+  } else if(state == 1) {
+    // armed
+    Serial.println("Enter state 1 (armed): Turn fan on.");
+    if(isNight() && !force ) {
+      organ.fanOff();
+    } else {
+      organ.fanOn();
+    }
+
+  } else if(state == 2) {
+    // active
+    Serial.println("Enter state 2 (active): Play give peace a chance.");
+
+    int songSelect = random(10);
+    if(songSelect < 5) {
+      organ.loadGivePeaceAChanceChorus();
+    } else if(songSelect < 8) {
+      organ.loadGivePeaceAChanceChorusSecondVoice();
+    } else {
+      organ.loadGivePeaceAChanceChorusSecondVoiceChurch();
+    }
+
+    if(isNight() && !force) {
+      organ.fanOff();
+      organ.play(false);
+    } else {
+      organ.play(true);
+    }
+
+  }
+}
+
+uint16_t color[4];
+
 void loop()
 {
-  
-  //led.purpleColorLoop();
   organ.update();
-  //led.update();
 
+    for(int i=0; i<4; i++) {
+      float colorValue = map(LED::getFadeMod(1), 0, 1, DARK[i], BRIGHT[i]);
+      color[i] = colorValue;
+    }
+
+  /*for(int i=1; i<= NUM_LED_SEGMENTS; i++) {
+    led.setSegmentColor(i, 0, 0, 0, 0);
+  }*/
+
+  for (int i = 0; i < NUM_PIPES; ++i) {
+
+        int ledSegment = getLEDSegment(i);
+        if (organ.getPipeState(i))
+        {
+          // LED for active PIPE
+          led.setSegmentColor(ledSegment, color[0], color[1], color[2], 0.8*maxBrightness);
+
+        } else {
+          // LED for inactive PIPE 
+          if(organ.isPlaying()) {
+
+            led.setSegmentColor(ledSegment, color[0], color[1], color[2], 0.1*maxBrightness);
+          } else {
+            float modValue = map(LED::getFadeMod(i), 0, 1, 0.5, 1);
+
+            led.setSegmentColor(ledSegment, color[0], color[1]*modValue, color[2], 0);
+          }
+
+        }
+  }
+
+
+  for(int i=6; i<=7; i++) {
+      float modValue = map(LED::getFadeMod(i), 0, 1, 0.5, 0.8);
+
+    if(organ.isPlaying()) {
+      // Brick wall
+      led.setSegmentColor(i, color[0]*0.8, color[1]*modValue, color[2], 0);
+
+    } else {
+
+      // Brick wall
+      led.setSegmentColor(i, color[0]*0.8, color[1]*modValue, color[2], 0);
+    }
+  }
+
+  float modValue = map(LED::getFadeMod(8), 0, 1, 0.5, 0.9);
+  // Middle wall
+  if(organ.isPlaying()) {
+    //float modValue = map(LED::getFadeMod(8), 0, 1, 0.5, 1);
+    led.setSegmentColor(8, color[0]*0.9, color[1]*modValue, color[2], 0);
+  } else {
+    //float modValue = map(LED::getFadeMod(8), 0, 1, 0.5, 1);
+    led.setSegmentColor(8, color[0]*0.9, color[1]*modValue, color[2], 0);
+  }
+
+
+  //led.update();
 
   for (int i = 0; i < NUM_BUTTONS; i++)
   {
@@ -254,20 +359,19 @@ void loop()
     }
     else if (buttons[1].fell())
     {
-      organ.play();
-      Serial.println("test play");
+      Serial.println("test armed");
+      enterState(1, true);
     }
     else if (buttons[2].fell())
     {
-      Serial.println(organ.getFanState());
-      
-      if(organ.getFanState() == 1) {
-        organ.fanOff();
-      } else {
-        organ.fanOn();
+      Serial.println("test play");
+      if(state != 1) {
+        enterState(1, true);
+        delay(fanPressureDelay);
       }
-    }
 
+      enterState(2, true); 
+    }
   }
   else
   {
@@ -299,23 +403,17 @@ void loop()
     // set armed colors
 
     PIR->update();
+
     if (PIR->fell())
     {
       Serial.println("PIR acivity detected");
       lastPIRActivityTime = millis();
 
-      // TODO: do not turn on at night
-
       if (state == 0)
       {
-
         if (lastPIRActivityTime - stateChangeTime > activationDelay)
         {
-          Serial.println("enter state 1, turn fan on");
-
-          organ.fanOn();
-          state = 1;
-          stateChangeTime = millis();
+          enterState(1);
         }
       }
       else if (state == 1)
@@ -323,38 +421,18 @@ void loop()
 
         if (lastPIRActivityTime - stateChangeTime > fanPressureDelay)
         {
-          Serial.println("enter state 2, play organ");
-
-          organ.play();
-          state = 2;
-          stateChangeTime = millis();
+          enterState(2);
         }
       }
-      // digitalWriteFast(valve_pins[3], PIR->read());
     }
+
   }
   else if (state == 2)
   {
     if (!organ.isPlaying())
     {
+      enterState(0);
       // Exit state when done playing
-      organ.fanOff(); // TODO: do not turn fan off if we want to loop music
-      state = 0;
-      stateChangeTime = millis();
-    }
-    else
-    {
-      // TODO: set light to music and state
-      for (int i = 0; i < NUM_PIPES; ++i)
-      {
-        if (organ.getPipeState(i))
-        {
-          // add intensity hint to color of led
-          //led.setSegmentColor(i, 0.93*maxBrightness, 0.7*maxBrightness, 0.96 * maxBrightness, maxBrightness);
-        } else {
-          //led.setSegmentColor(i, 0.93*maxBrightness, 0.7*maxBrightness, 0.96 * maxBrightness, 0.5*maxBrightness);
-        }
-      }
     }
   }
 }
