@@ -29,7 +29,7 @@ const char menu[NUM_MENU_ITEMS] = {'D', 'M', 'Y', 'h', 'm', 's'};
 
 bool inputStateEnabled = false;
 uint32_t lastInputTime = 0;
-uint16_t inputStateTimeout = 20000;
+uint16_t inputStateTimeout = 8000;
 
 // OLED display
 Adafruit_SSD1306 display(OLED_RESET_PIN); 
@@ -44,7 +44,7 @@ uint32_t lastPIRActivityTime = 0;
 bool displayClear = false;
 
 uint32_t activationDelay = 1000*30*60; // 30 minutes
-uint16_t fanPressureDelay =10000;
+uint16_t fanPressureDelay = 10000;
 
 // 0: idle, 1: armed, 2: active
 int state = 0;
@@ -100,6 +100,8 @@ void displayDateTime()
 
 }
 
+const uint8_t monthDays[]={31,28,31,30,31,30,31,31,30,31,30,31};
+
 /* Handle 3 button menu navigation. Allows to to set the date and time
 - button 1: input navigation
 - button 2: increase value
@@ -119,7 +121,9 @@ void inputState() {
          bool downPressed = buttons[2].fell();
          bool upOrDownPressed = upPressed || downPressed;
 
-        lastInputTime = millis();
+        if(upOrDownPressed) {
+          lastInputTime = millis();
+        }
 
         tmElements_t tm;
         breakTime(now(), tm);
@@ -127,9 +131,13 @@ void inputState() {
         if (menu[activeMenuIndex] == 'D')
         {
           if(upPressed) {
-            tm.Day++;
+            if(tm.Day < monthDays[tm.Month-1]) {
+              tm.Day++;
+            }
           } else if(downPressed) {
-            tm.Day--;
+            if(tm.Day > 0) {
+              tm.Day--;
+            }
           }
           
         }
@@ -137,9 +145,19 @@ void inputState() {
         {
           // month
           if(upPressed) {
-            tm.Month++;
+            if(tm.Month < 12) {
+              tm.Month++;
+            }
           } else if(downPressed) {
-            tm.Month--;
+            if(tm.Month > 0) {
+              tm.Month--;
+            }
+          } 
+
+          if(upOrDownPressed) {
+            if(tm.Day > monthDays[tm.Month-1]) {
+              tm.Day = monthDays[tm.Month-1];
+            }
           }
 
         }
@@ -149,34 +167,48 @@ void inputState() {
           if(upPressed) {
             tm.Year++;
           } else if(downPressed) {
-            tm.Year--;
+            if(tm.Year > 0) {
+              tm.Year--;
+            }
           }
         }
         else if (menu[activeMenuIndex] == 'h')
         {
           // hour
           if(upPressed) {
-            tm.Hour++;
+            if(tm.Hour < 24) {
+              tm.Hour++;
+            }
           } else if(downPressed) {
-            tm.Hour--;
+            if(tm.Hour > 0) {
+              tm.Hour--;
+            }
           }
         }
         else if (menu[activeMenuIndex] == 'm')
         {
           // minute
           if(upPressed) {
-            tm.Minute++;
+            if(tm.Minute < 60) {
+              tm.Minute++;
+            }
           } else if(downPressed) {
-            tm.Minute--;
+            if(tm.Minute > 0) {
+              tm.Minute--;
+            }
           }
         }
         else if (menu[activeMenuIndex] == 's')
         {
           // second
           if(upPressed) {
-            tm.Second++;
+            if(tm.Second < 60) {
+              tm.Second++;
+            }
           } else if(downPressed) {
-            tm.Second--;
+            if(tm.Minute > 0) {
+              tm.Second--;
+            }
           }
         }
 
@@ -232,9 +264,12 @@ void setup()
 
 }
 
+bool lastStateForced = false;
 void enterState(int newState, bool force=false) {
   state = newState;
   stateChangeTime = millis();
+
+  lastStateForced = force;
 
   if(state == 0) {
     // idle
@@ -254,10 +289,10 @@ void enterState(int newState, bool force=false) {
     // active
     Serial.println("Enter state 2 (active): Play give peace a chance.");
 
-    int songSelect = random(10);
-    if(songSelect < 5) {
+    int songSelect = random(100);
+    if(songSelect < 20) {
       organ.loadGivePeaceAChanceChorus();
-    } else if(songSelect < 8) {
+    } else if(songSelect < 80) {
       organ.loadGivePeaceAChanceChorusSecondVoice();
     } else {
       organ.loadGivePeaceAChanceChorusSecondVoiceChurch();
@@ -360,7 +395,12 @@ void loop()
     else if (buttons[1].fell())
     {
       Serial.println("test armed");
-      enterState(1, true);
+      if(state == 0) {
+        enterState(1, true);
+      } else {
+        enterState(0, true);
+
+      }
     }
     else if (buttons[2].fell())
     {
@@ -369,7 +409,7 @@ void loop()
         enterState(1, true);
         delay(fanPressureDelay);
       }
-
+      delay(2000);
       enterState(2, true); 
     }
   }
@@ -421,7 +461,7 @@ void loop()
 
         if (lastPIRActivityTime - stateChangeTime > fanPressureDelay)
         {
-          enterState(2);
+          enterState(2, lastStateForced);
         }
       }
     }
@@ -431,7 +471,11 @@ void loop()
   {
     if (!organ.isPlaying())
     {
-      enterState(0);
+      if(lastStateForced) {
+        enterState(1, true);
+      } else {
+        enterState(0);
+      }
       // Exit state when done playing
     }
   }
