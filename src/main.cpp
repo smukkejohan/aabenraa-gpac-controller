@@ -55,8 +55,15 @@ time_t getTeensy4Time()
   return rtc_get();
 }
 
-uint8_t nightStartHour = 20;
-uint8_t nightEndHour = 8;
+// Jeg har i øvrigt talt med bygningsejeren, og jeg vil gerne bede dig om at justere afspilningsvinduet af piberne til følgende: Torsdag til Søndag, fra 10 – 16, hver 30 min.
+uint8_t nightEndHour = 10;
+uint8_t nightStartHour = 16;
+
+bool isMutedTime() {
+  int num = weekday(); /* sunday is 1 */ 
+  return isNight() || num == 2 || num == 3 || num == 4 /* is monday, tueday, wednesday */
+}
+
 bool isNight() {
   return hour() >= nightStartHour || hour() < nightEndHour;
 }
@@ -222,10 +229,9 @@ void inputState() {
 
 void setup()
 {
-  setSyncProvider(getTeensy4Time); // TODO: new battery 2032 cell when installing on site
+  setSyncProvider(getTeensy4Time);
   
   //led.setup();
-
   //pinMode(IN1_PIN, INPUT_PULLUP);
   PIR->attach(IN1_PIN, INPUT_PULLUP);       //setup the bounce instance for the current button
   PIR->interval(40);              // interval in ms
@@ -279,7 +285,7 @@ void enterState(int newState, bool force=false) {
   } else if(state == 1) {
     // armed
     Serial.println("Enter state 1 (armed): Turn fan on.");
-    if(isNight() && !force ) {
+    if(isMutedTime() && !force ) {
       organ.fanOff();
     } else {
       organ.fanOn();
@@ -298,7 +304,7 @@ void enterState(int newState, bool force=false) {
       organ.loadGivePeaceAChanceChorusSecondVoiceChurch();
     }
 
-    if(isNight() && !force) {
+    if(isMutedTime() && !force) {
       organ.fanOff();
       organ.play(false);
     } else {
