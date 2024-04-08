@@ -59,13 +59,14 @@ time_t getTeensy4Time()
 uint8_t nightEndHour = 10;
 uint8_t nightStartHour = 16;
 
-bool isMutedTime() {
-  int num = weekday(); /* sunday is 1 */ 
-  return isNight() || num == 2 || num == 3 || num == 4 /* is monday, tueday, wednesday */
-}
 
 bool isNight() {
   return hour() >= nightStartHour || hour() < nightEndHour;
+}
+
+bool isMutedTime() {
+  int num = weekday(); /* sunday is 1 */ 
+  return isNight() || num == 2 || num == 3 || num == 4; /* is monday, tueday, wednesday */
 }
 
 int getLEDSegment(int pipeIndex) {
